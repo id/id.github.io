@@ -1,0 +1,12 @@
+baseURL = 'https://id.github.io/'
+languageCode = 'en-us'
+title = 'Dev Notes'
+theme = 'paper'
+copyright = "© 2025, Ivan Dyachkov"
+DefaultContentLanguage = "en"
+
+[params]
+  github = 'id'
+  linkedin = 'ivandyachkov'
+  rss = 'true'
+  name = 'Ivan Dyachkov'
