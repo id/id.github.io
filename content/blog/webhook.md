@@ -1,6 +1,6 @@
 +++
 title = "Server webhooks with nginx and systemd"
-date = "2025-08-23T08:51:38+02:00"
+date = "2025-08-23"
 description = "Use nginx and systemd to receive webhooks and trigger deployments from GitHub Actions. Secret URLs, per-env logs, systemd path units, and practical security tips."
 tags = ["webhooks", "nginx", "systemd", "deployment", "ci-cd", "github-actions", "devops", "linux", "automation", "security"]
 +++
