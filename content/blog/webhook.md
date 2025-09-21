@@ -5,14 +5,14 @@ description = "Use nginx and systemd to receive webhooks and trigger deployments
 tags = ["webhooks", "nginx", "systemd", "deployment", "ci-cd", "github-actions", "devops", "linux", "automation", "security"]
 +++
 
+**Update**: see an improved version of this post that uses Unix domain sockets with systemd socket activation: [Better server webhooks: nginx + Unix sockets + systemd](/blog/webhook-v2/).
+
 Webhooks let one service notify another when something happens, for example, triggering a deploy right after you push code to your Git repository. Many tools (and SaaS platforms) exist to receive and process webhooks, such as [adnanh/webhook](https://github.com/adnanh/webhook). But if you already run nginx, you can build a lightweight, reliable webhook receiver without adding another daemon.
 
 In this post, we’ll use nginx and systemd to:
 - Expose a secret, exact-match URL that returns 204 on success.
 - Capture the `version` query parameter into a per-environment log.
 - Have systemd react to that log change and run a oneshot deploy script.
-
-I’ll also show a GitHub Actions example for triggering the endpoint, plus a few notes on log rotation and security.
 
 Below is an example with `staging` and `release` environments.
 
@@ -79,19 +79,14 @@ Type=oneshot
 # Ensure there's something in the per-env log before proceeding
 ExecStartPre=/usr/bin/test -s /var/log/nginx/webhook/app/%i
 # Capture the last requested version into a place your deploy script reads
-ExecStart=/usr/bin/sh -c 'tail -n1 /var/log/nginx/webhook/app/%i > /etc/app/%i/version';
+ExecStartPre=/usr/bin/sh -c 'tail -n1 /var/log/nginx/webhook/app/%i > /etc/app/%i/version';
 # Run your deploy; receives 'staging' or 'release' as $1
 ExecStart=/usr/local/bin/deploy-app %i
 # Clear the trigger log for the next event
 ExecStopPost=/usr/bin/truncate -s 0 /var/log/nginx/webhook/app/%i
-# Recommended hardening (tune to your environment)
-#User=app
-#Group=app
-#WorkingDirectory=/etc/app/%i
-#ProtectSystem=strict
-#ProtectHome=true
-#PrivateTmp=true
-#NoNewPrivileges=true
+User=app
+Group=app
+WorkingDirectory=/var/lib/app/%i
 ```
 
 ## systemd path: trigger on log change
@@ -164,71 +159,3 @@ deploy:
       method: GET
 ```
 
-## deploy script example
-
-Example skeleton expected by the service above.
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-ENVIRONMENT="${1:?usage: deploy-app <staging|release>}"
-VERSION_FILE="/etc/app/${ENVIRONMENT}/version"
-
-if [[ ! -s "$VERSION_FILE" ]]; then
-  echo "No version provided" >&2
-  exit 1
-fi
-
-VERSION="$(tail -n1 "$VERSION_FILE")"
-echo "Deploying ${ENVIRONMENT} version: ${VERSION}"
-
-# Example:
-# git -C /srv/app fetch origin
-# git -C /srv/app checkout --force "refs/heads/${VERSION}"   # or refs/tags/${VERSION}
-# docker compose -f /srv/app/compose.${ENVIRONMENT}.yml pull
-# docker compose -f /srv/app/compose.${ENVIRONMENT}.yml up -d --remove-orphans
-
-echo "Done."
-```
-
-## Testing
-
-- Staging test
-  - `curl -i "https://webhook.app.io/SECRET/deploy-app/staging?version=test-123"`
-  - Check: `systemctl status deploy-app@staging` and `/etc/app/staging/version`
-- Release test
-  - `curl -i "https://webhook.app.io/SECRET/deploy-app/release?version=1.2.3"`
-  - Check: `systemctl status deploy-app@release` and `/etc/app/release/version`
-- Endpoints should return HTTP 204.
-
-## Log rotation
-
-The per-environment logs are truncated after each run, but the audit log grows.
-
-```
-# /etc/logrotate.d/nginx-webhook
-/var/log/nginx/webhook/webhook.log {
-  rotate 12
-  weekly
-  missingok
-  compress
-  delaycompress
-  notifempty
-  create 0640 www-data adm
-  postrotate
-    [ -s /run/nginx.pid ] &amp;&amp; kill -USR1 $(cat /run/nginx.pid)
-  endscript
-}
-```
-
-## Security notes
-
-- Keep the secret path long and random; rotate if exposed.
-- Serve only over TLS.
-- Optionally:
-  - Add basic IP rate limiting on the server block.
-  - Restrict to GET as shown (or switch to POST if you prefer).
-  - If you need HMAC validation or more complex checks, consider adding an njs/lua validation step or move to a small webhook verifier service.
-
-That’s it: nginx writes the version to a tiny file, systemd notices and runs your deploy. No extra daemon needed.
